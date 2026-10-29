@@ -1,5 +1,5 @@
 {
-  "name": "Сделки для отдела продаж",
+  "name": "Получение сделок",
   "nodes": [
     {
       "id": "e15cf47f-8d4a-416c-af1e-f4773d181373",
@@ -104,7 +104,7 @@
         300
       ],
       "parameters": {
-        "jsCode": "const response = $input.first().json;\nconst fail = (code, message, status = null) => [{ json: {\n  ids: [], errors: [{ id: null, code, message, status }]\n} }];\n\nif (response.error) {\n  return fail('NETWORK_ERROR', 'Не удалось получить список сделок: ошибка соединения или тайм-аут.');\n}\n\nconst status = Number(response.statusCode);\nlet body;\ntry {\n  body = JSON.parse(response.body);\n} catch {\n  return fail('INVALID_JSON', 'API вернул некорректный JSON вместо списка сделок.', status);\n}\n\nif (status < 200 || status >= 300 || !Number.isInteger(status)) {\n  return fail('HTTP_ERROR', typeof body?.error === 'string'\n    ? body.error.slice(0, 300) : `Не удалось получить список сделок. HTTP ${status}.`, status);\n}\nif (!Array.isArray(body?.result?.deals)) {\n  return fail('INVALID_RESPONSE', 'В ответе API нет массива result.deals.', status);\n}\n\nconst ids = [];\nconst errors = [];\nconst seen = new Set();\nfor (const [index, id] of body.result.deals.entries()) {\n  if (!Number.isSafeInteger(id) || id <= 0) {\n    errors.push({ id: null, code: 'INVALID_ID', message: `В списке сделок неверный ID в позиции ${index + 1}.` });\n    continue;\n  }\n  // Одинаковую сделку достаточно запросить один раз.\n  if (!seen.has(id)) {\n    seen.add(id);\n    ids.push(id);\n  }\n}\nreturn [{ json: { ids, errors } }];"
+        "jsCode": "// Ответ HTTP Request содержит статус и тело ответа API.\nconst response = $input.first().json;\nconst fail = message => [{ json: {\n  ids: [], errors: [{ id: null, message }]\n} }];\n\nif (response.error) {\n  return fail('Не удалось получить список сделок: ошибка соединения или тайм-аут.');\n}\n\nconst status = Number(response.statusCode);\n// HTTP-узел возвращает текст, поэтому некорректный JSON можно обработать здесь.\nlet body;\ntry {\n  body = JSON.parse(response.body);\n} catch {\n  return fail('API вернул некорректный JSON вместо списка сделок.');\n}\n\nif (status < 200 || status >= 300 || !Number.isInteger(status)) {\n  return fail(typeof body?.error === 'string'\n    ? body.error.slice(0, 300) : `Не удалось получить список сделок. HTTP ${status}.`);\n}\nif (!Array.isArray(body?.result?.deals)) {\n  return fail('В ответе API нет массива result.deals.');\n}\n\nconst ids = [];\nconst errors = [];\nconst seen = new Set();\nfor (const [index, id] of body.result.deals.entries()) {\n  if (!Number.isSafeInteger(id) || id <= 0) {\n    errors.push({ id: null, message: `В списке сделок неверный ID в позиции ${index + 1}.` });\n    continue;\n  }\n  // Одинаковую сделку достаточно запросить один раз.\n  if (!seen.has(id)) {\n    seen.add(id);\n    ids.push(id);\n  }\n}\nreturn [{ json: { ids, errors } }];"
       }
     },
     {
@@ -150,7 +150,7 @@
         200
       ],
       "parameters": {
-        "jsCode": "return $input.first().json.ids.map(id => ({\n  json: { id },\n  pairedItem: { item: 0 }\n}));"
+        "jsCode": "// Каждый ID становится отдельным элементом для HTTP Request.\nreturn $input.first().json.ids.map(id => ({\n  json: { id },\n  pairedItem: { item: 0 }\n}));"
       }
     },
     {
@@ -213,7 +213,7 @@
         200
       ],
       "parameters": {
-        "jsCode": "const data = [];\nconst errors = [...$('Проверить список').first().json.errors];\nconst validId = value => Number.isSafeInteger(value) && value > 0;\nconst validParty = value => value && validId(value.id) && typeof value.name === 'string';\n\nfor (const [index, item] of $input.all().entries()) {\n  // Берем исходный ID по связи элементов, в том числе при сетевой ошибке.\n  const id = $('Подготовить ID').itemMatching(index).json.id;\n  const response = item.json;\n  const addError = (code, message, status = null) => errors.push({ id, code, message, status });\n\n  if (response.error) {\n    addError('NETWORK_ERROR', 'Ошибка соединения с API или превышено время ожидания.');\n    continue;\n  }\n\n  const status = Number(response.statusCode);\n  let body;\n  try {\n    body = JSON.parse(response.body);\n  } catch {\n    addError('INVALID_JSON', 'API вернул некорректный JSON.', status);\n    continue;\n  }\n\n  if (!Number.isInteger(status) || status < 200 || status >= 300 || body?.error) {\n    addError('HTTP_ERROR', typeof body?.error === 'string'\n      ? body.error.slice(0, 300) : `Не удалось загрузить сделку. HTTP ${status}.`, status);\n    continue;\n  }\n\n  const deal = body?.result;\n  if (!deal || deal.id !== id || typeof deal.title !== 'string'\n      || typeof deal.amount !== 'number' || !Number.isFinite(deal.amount)\n      || !validParty(deal.responsible) || !validParty(deal.company)) {\n    addError('INVALID_RESPONSE', 'В ответе API отсутствуют обязательные поля или не совпадает ID.', status);\n    continue;\n  }\n\n  // Отдаем только поля, которые нужны странице.\n  data.push({\n    id: deal.id,\n    title: deal.title,\n    amount: deal.amount,\n    responsible: { id: deal.responsible.id, name: deal.responsible.name },\n    company: { id: deal.company.id, name: deal.company.name }\n  });\n}\n\nreturn [{ json: {\n  success: errors.length === 0,\n  total: data.length,\n  data,\n  errors\n} }];"
+        "jsCode": "const data = [];\nconst errors = [...$('Проверить список').first().json.errors];\nconst validId = value => Number.isSafeInteger(value) && value > 0;\nconst validParty = value => value && validId(value.id) && typeof value.name === 'string';\n\nfor (const [index, item] of $input.all().entries()) {\n  // Берем исходный ID по связи элементов, в том числе при сетевой ошибке.\n  const id = $('Подготовить ID').itemMatching(index).json.id;\n  const response = item.json;\n  const addError = message => errors.push({ id, message });\n\n  // Ошибка одного запроса не останавливает обработку остальных сделок.\n  if (response.error) {\n    addError('Ошибка соединения с API или превышено время ожидания.');\n    continue;\n  }\n\n  const status = Number(response.statusCode);\n  let body;\n  try {\n    body = JSON.parse(response.body);\n  } catch {\n    addError('API вернул некорректный JSON.');\n    continue;\n  }\n\n  if (!Number.isInteger(status) || status < 200 || status >= 300 || body?.error) {\n    addError(typeof body?.error === 'string'\n      ? body.error.slice(0, 300) : `Не удалось загрузить сделку. HTTP ${status}.`);\n    continue;\n  }\n\n  const deal = body?.result;\n  if (!deal || deal.id !== id || typeof deal.title !== 'string'\n      || typeof deal.amount !== 'number' || !Number.isFinite(deal.amount)\n      || !validParty(deal.responsible) || !validParty(deal.company)) {\n    addError('В ответе API отсутствуют обязательные поля или не совпадает ID.');\n    continue;\n  }\n\n  // Отдаем только поля, которые нужны странице.\n  data.push({\n    id: deal.id,\n    title: deal.title,\n    amount: deal.amount,\n    responsible: { id: deal.responsible.id, name: deal.responsible.name },\n    company: { id: deal.company.id, name: deal.company.name }\n  });\n}\n\n// Частичный результат считается полученным: доступные сделки остаются в data.\nreturn [{ json: {\n  success: data.length > 0 || errors.length === 0,\n  total: data.length,\n  data,\n  errors\n} }];"
       }
     },
     {
@@ -226,7 +226,7 @@
         460
       ],
       "parameters": {
-        "jsCode": "const errors = $input.first().json.errors;\nreturn [{ json: { success: errors.length === 0, total: 0, data: [], errors } }];"
+        "jsCode": "// Эта ветка отвечает и на пустой список, и на ошибку получения списка.\nconst errors = $input.first().json.errors;\nreturn [{ json: { success: errors.length === 0, total: 0, data: [], errors } }];"
       }
     },
     {
@@ -264,7 +264,7 @@
         -100
       ],
       "parameters": {
-        "content": "## Получение сделок\nВход: GET /webhook/api/test.task/get.deals, без параметров.\nВыход: { success, total, data, errors }.\nPHP обращается только к этому webhook. Настройки внешнего API находятся в узле «Настройки API».",
+        "content": "## Получение сделок\nВход: GET /webhook/api/test.task/get.deals, без параметров.\nВыход: { success, total, data, errors }.\nPHP делает один запрос к этому webhook. Адрес API и пути методов указаны в узле «Настройки API».",
         "height": 270,
         "width": 650,
         "color": 5
@@ -280,7 +280,7 @@
         -180
       ],
       "parameters": {
-        "content": "## Ошибки не останавливают загрузку\nHTTP Request: Never Error для HTTP-ошибок, On Error = Continue для тайм-аутов и ошибок сети. Ответ читаем как текст и проверяем JSON отдельно.\n\nПолный ответ: success=true. Частичный: success=false, доступные сделки в data, причины с ID в errors. total равен data.length.\n\nHTTP 200: полный, частичный или пустой список. HTTP 502: ошибка списка или ни одной успешно загруженной сделки. Пустой список проходит по отдельной ветке.",
+        "content": "## Обработка ошибок\nHTTP Request продолжает выполнение после HTTP-ошибки, сетевого сбоя или тайм-аута. Code разбирает текст ответа и сохраняет ошибки по ID.\n\nerrors содержит записи { id, message }. У ошибки всего списка id = null.\n\nsuccess = true при полном, частичном или корректном пустом результате. success = false при ошибке списка или отказе всех сделок. total = data.length.\n\nHTTP 200 для полученного результата, HTTP 502 при полном отказе. Пустой список проходит по отдельной ветке.",
         "height": 340,
         "width": 900,
         "color": 4
