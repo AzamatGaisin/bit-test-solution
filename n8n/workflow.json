@@ -1,0 +1,405 @@
+{
+  "name": "Сделки для отдела продаж",
+  "nodes": [
+    {
+      "id": "e15cf47f-8d4a-416c-af1e-f4773d181373",
+      "name": "Получить сделки",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "api/test.task/get.deals",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "c5af9db3-3bdd-463a-86bf-831bb4d1850c"
+    },
+    {
+      "id": "66d5c2be-5de8-4ae5-8f58-451093fd5d65",
+      "name": "Настройки API",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cbac3bcc-eecc-4b86-a0fe-e606098f5384",
+              "name": "baseUrl",
+              "value": "https://run.mob-edu.ru",
+              "type": "string"
+            },
+            {
+              "id": "b59238b1-ec21-4187-ba89-017d7efce198",
+              "name": "listPath",
+              "value": "/webhook/api/test.task/get.element.list",
+              "type": "string"
+            },
+            {
+              "id": "dd1472ee-3f5a-4dfa-8b66-15f487ad94e6",
+              "name": "detailPath",
+              "value": "/webhook/api/test.task/get.element",
+              "type": "string"
+            },
+            {
+              "id": "cbf2ee58-8aa7-4aa6-b34e-a4ef61f6b575",
+              "name": "timeoutMs",
+              "value": 10000,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5c6779e1-f9e0-4a4a-9a8a-d95cb5351ac3",
+      "name": "Список ID",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.baseUrl + $json.listPath }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": "={{ $('Настройки API').first().json.timeoutMs }}",
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text",
+              "outputPropertyName": "body"
+            }
+          }
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "2db0fb3a-7306-4823-9ecf-120ac7b7ce2b",
+      "name": "Проверить список",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst fail = (code, message, status = null) => [{ json: {\n  ids: [], errors: [{ id: null, code, message, status }]\n} }];\n\nif (response.error) {\n  return fail('NETWORK_ERROR', 'Не удалось получить список сделок: ошибка соединения или тайм-аут.');\n}\n\nconst status = Number(response.statusCode);\nlet body;\ntry {\n  body = JSON.parse(response.body);\n} catch {\n  return fail('INVALID_JSON', 'API вернул некорректный JSON вместо списка сделок.', status);\n}\n\nif (status < 200 || status >= 300 || !Number.isInteger(status)) {\n  return fail('HTTP_ERROR', typeof body?.error === 'string'\n    ? body.error.slice(0, 300) : `Не удалось получить список сделок. HTTP ${status}.`, status);\n}\nif (!Array.isArray(body?.result?.deals)) {\n  return fail('INVALID_RESPONSE', 'В ответе API нет массива result.deals.', status);\n}\n\nconst ids = [];\nconst errors = [];\nconst seen = new Set();\nfor (const [index, id] of body.result.deals.entries()) {\n  if (!Number.isSafeInteger(id) || id <= 0) {\n    errors.push({ id: null, code: 'INVALID_ID', message: `В списке сделок неверный ID в позиции ${index + 1}.` });\n    continue;\n  }\n  // Одинаковую сделку достаточно запросить один раз.\n  if (!seen.has(id)) {\n    seen.add(id);\n    ids.push(id);\n  }\n}\nreturn [{ json: { ids, errors } }];"
+      }
+    },
+    {
+      "id": "38cf14e6-b561-483e-b4cc-5c5f04dad386",
+      "name": "Есть ID",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        960,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "80f90e96-004b-46f2-a8ee-f9486d5bacef",
+              "leftValue": "={{ $json.ids.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "09dd1e30-3890-4f95-8fbd-ec558b28e778",
+      "name": "Подготовить ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        200
+      ],
+      "parameters": {
+        "jsCode": "return $input.first().json.ids.map(id => ({\n  json: { id },\n  pairedItem: { item: 0 }\n}));"
+      }
+    },
+    {
+      "id": "54f59336-b355-4a97-a82c-b15a391fc9cc",
+      "name": "Данные сделки",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Настройки API').first().json.baseUrl + $('Настройки API').first().json.detailPath }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": "={{ $('Настройки API').first().json.timeoutMs }}",
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text",
+              "outputPropertyName": "body"
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 200
+            }
+          }
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "={{ $json.id }}"
+            }
+          ]
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "870ddce1-4979-4cb2-bf40-34726d3d5735",
+      "name": "Собрать ответ",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const data = [];\nconst errors = [...$('Проверить список').first().json.errors];\nconst validId = value => Number.isSafeInteger(value) && value > 0;\nconst validParty = value => value && validId(value.id) && typeof value.name === 'string';\n\nfor (const [index, item] of $input.all().entries()) {\n  // Берем исходный ID по связи элементов, в том числе при сетевой ошибке.\n  const id = $('Подготовить ID').itemMatching(index).json.id;\n  const response = item.json;\n  const addError = (code, message, status = null) => errors.push({ id, code, message, status });\n\n  if (response.error) {\n    addError('NETWORK_ERROR', 'Ошибка соединения с API или превышено время ожидания.');\n    continue;\n  }\n\n  const status = Number(response.statusCode);\n  let body;\n  try {\n    body = JSON.parse(response.body);\n  } catch {\n    addError('INVALID_JSON', 'API вернул некорректный JSON.', status);\n    continue;\n  }\n\n  if (!Number.isInteger(status) || status < 200 || status >= 300 || body?.error) {\n    addError('HTTP_ERROR', typeof body?.error === 'string'\n      ? body.error.slice(0, 300) : `Не удалось загрузить сделку. HTTP ${status}.`, status);\n    continue;\n  }\n\n  const deal = body?.result;\n  if (!deal || deal.id !== id || typeof deal.title !== 'string'\n      || typeof deal.amount !== 'number' || !Number.isFinite(deal.amount)\n      || !validParty(deal.responsible) || !validParty(deal.company)) {\n    addError('INVALID_RESPONSE', 'В ответе API отсутствуют обязательные поля или не совпадает ID.', status);\n    continue;\n  }\n\n  // Отдаем только поля, которые нужны странице.\n  data.push({\n    id: deal.id,\n    title: deal.title,\n    amount: deal.amount,\n    responsible: { id: deal.responsible.id, name: deal.responsible.name },\n    company: { id: deal.company.id, name: deal.company.name }\n  });\n}\n\nreturn [{ json: {\n  success: errors.length === 0,\n  total: data.length,\n  data,\n  errors\n} }];"
+      }
+    },
+    {
+      "id": "bd66410b-5a08-486d-847e-56d446bce835",
+      "name": "Ответ без сделок",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        460
+      ],
+      "parameters": {
+        "jsCode": "const errors = $input.first().json.errors;\nreturn [{ json: { success: errors.length === 0, total: 0, data: [], errors } }];"
+      }
+    },
+    {
+      "id": "81f44169-79e5-4f14-8012-a8f3d7250a45",
+      "name": "Вернуть JSON",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1920,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": "={{ !$json.success && $json.total === 0 ? 502 : 200 }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "a7a91633-4884-422e-9e3a-a833e9aee1f3",
+      "name": "Вход и выход",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -100
+      ],
+      "parameters": {
+        "content": "## Получение сделок\nВход: GET /webhook/api/test.task/get.deals, без параметров.\nВыход: { success, total, data, errors }.\nPHP обращается только к этому webhook. Настройки внешнего API находятся в узле «Настройки API».",
+        "height": 270,
+        "width": 650,
+        "color": 5
+      }
+    },
+    {
+      "id": "840a0e2f-553b-4cbb-bb86-757bd532db18",
+      "name": "Обработка ошибок",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        960,
+        -180
+      ],
+      "parameters": {
+        "content": "## Ошибки не останавливают загрузку\nHTTP Request: Never Error для HTTP-ошибок, On Error = Continue для тайм-аутов и ошибок сети. Ответ читаем как текст и проверяем JSON отдельно.\n\nПолный ответ: success=true. Частичный: success=false, доступные сделки в data, причины с ID в errors. total равен data.length.\n\nHTTP 200: полный, частичный или пустой список. HTTP 502: ошибка списка или ни одной успешно загруженной сделки. Пустой список проходит по отдельной ветке.",
+        "height": 340,
+        "width": 900,
+        "color": 4
+      }
+    }
+  ],
+  "connections": {
+    "Получить сделки": {
+      "main": [
+        [
+          {
+            "node": "Настройки API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Настройки API": {
+      "main": [
+        [
+          {
+            "node": "Список ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Список ID": {
+      "main": [
+        [
+          {
+            "node": "Проверить список",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Проверить список": {
+      "main": [
+        [
+          {
+            "node": "Есть ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Подготовить ID": {
+      "main": [
+        [
+          {
+            "node": "Данные сделки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Данные сделки": {
+      "main": [
+        [
+          {
+            "node": "Собрать ответ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Собрать ответ": {
+      "main": [
+        [
+          {
+            "node": "Вернуть JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ответ без сделок": {
+      "main": [
+        [
+          {
+            "node": "Вернуть JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Есть ID": {
+      "main": [
+        [
+          {
+            "node": "Подготовить ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ответ без сделок",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "executionTimeout": 45
+  },
+  "pinData": {},
+  "tags": []
+}
