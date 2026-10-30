@@ -30,7 +30,9 @@ if ($body === false) {
 } else {
     $result = json_decode($body, true);
     if (json_last_error() !== JSON_ERROR_NONE) {
-        $pageError = 'n8n вернул некорректный JSON. HTTP ' . $status . '.';
+        $pageError = $status >= 300
+            ? 'n8n вернул HTTP ' . $status . '.'
+            : 'n8n вернул некорректный JSON. HTTP ' . $status . '.';
     } elseif (!isset($result['data']) || !is_array($result['data'])) {
         $pageError = 'В ответе n8n нет списка сделок. HTTP ' . $status . '.';
     } else {
@@ -84,7 +86,7 @@ if ($pageError || (!$deals && $errors)) {
         </div>
     <?php endif; ?>
 
-    <?php if (!$pageError): ?>
+    <?php if (!$pageError && ($deals || !$errors)): ?>
         <p class="text-secondary">Загружено сделок: <?= count($deals) ?></p>
     <?php endif; ?>
 
@@ -100,7 +102,7 @@ if ($pageError || (!$deals && $errors)) {
             </tr>
             </thead>
             <tbody>
-            <?php // Пустое поле в одной сделке не мешает показать остальные строки. ?>
+            <?php // Выводим готовый список из workflow. ?>
             <?php foreach ($deals as $deal): ?>
                 <tr>
                     <td><?= escape($deal['id'] ?? '') ?></td>
